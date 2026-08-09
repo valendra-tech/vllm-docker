@@ -37,11 +37,11 @@ upload() {
 
 ensure_ping() {
   : > "${ping_file}"
-  if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2" \
+  if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2/" \
     --endpoint-url "${R2_ENDPOINT}" \
     --region auto \
     --content-type application/json; then
-    echo "upload failed: s3://${R2_BUCKET}/v2" >&2
+    echo "upload failed: s3://${R2_BUCKET}/v2/" >&2
     exit 1
   fi
 }

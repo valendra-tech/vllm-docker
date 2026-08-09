@@ -74,7 +74,7 @@ cat > "${expected}" <<EOF
 s3
 cp
 ${work}/ping
-s3://public-docker-registry/v2
+s3://public-docker-registry/v2/
 --endpoint-url
 https://account.r2.cloudflarestorage.com
 --region
@@ -132,7 +132,7 @@ no-cache
 s3
 cp
 ${work}/ping
-s3://public-docker-registry/v2
+s3://public-docker-registry/v2/
 --endpoint-url
 https://account.r2.cloudflarestorage.com
 --region
