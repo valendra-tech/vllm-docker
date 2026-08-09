@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Upload an OCI layout to the R2 static registry.
 # Usage: push-r2.sh <oci-layout-dir> <tag>
+# Consumes the tab-separated plan from layout-upload-plan.sh and uploads each
+# object with the AWS CLI. Deletes uploaded blob files from the layout
+# directory (runner disk); manifest/tag files are kept.
 # Requires: AWS CLI, and env vars R2_ENDPOINT, R2_BUCKET,
 # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
 set -euo pipefail
@@ -17,12 +20,30 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ping_file="${PING_FILE:-$(mktemp)}"
 trap '[[ -z "${PING_FILE:-}" ]] && rm -f "${ping_file}"' EXIT
 
-ensure_ping() {
-  : > "${ping_file}"
-  aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2" \
+upload() {
+  local local_path="$1"
+  local s3_key="$2"
+  local content_type="$3"
+  local cache_control="$4"
+  if ! aws s3 cp "${local_path}" "s3://${R2_BUCKET}/${s3_key}" \
     --endpoint-url "${R2_ENDPOINT}" \
     --region auto \
-    --content-type application/json
+    --content-type "${content_type}" \
+    --cache-control "${cache_control}"; then
+    echo "upload failed: s3://${R2_BUCKET}/${s3_key}" >&2
+    exit 1
+  fi
+}
+
+ensure_ping() {
+  : > "${ping_file}"
+  if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2" \
+    --endpoint-url "${R2_ENDPOINT}" \
+    --region auto \
+    --content-type application/json; then
+    echo "upload failed: s3://${R2_BUCKET}/v2" >&2
+    exit 1
+  fi
 }
 
 ensure_ping
@@ -31,19 +52,11 @@ ensure_ping
 while IFS=$'\t' read -r kind local_path s3_key content_type cache_control; do
   case "${kind}" in
     BLOB)
-      aws s3 cp "${local_path}" "s3://${R2_BUCKET}/${s3_key}" \
-        --endpoint-url "${R2_ENDPOINT}" \
-        --region auto \
-        --content-type "${content_type}" \
-        --cache-control "${cache_control}"
+      upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
       rm -f "${local_path}"
       ;;
     MANIFEST | TAG)
-      aws s3 cp "${local_path}" "s3://${R2_BUCKET}/${s3_key}" \
-        --endpoint-url "${R2_ENDPOINT}" \
-        --region auto \
-        --content-type "${content_type}" \
-        --cache-control "${cache_control}"
+      upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
       ;;
     *)
       echo "unknown plan kind: ${kind}" >&2
