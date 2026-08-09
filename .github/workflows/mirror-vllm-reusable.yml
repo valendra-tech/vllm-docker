@@ -86,7 +86,7 @@ jobs:
           REF_TYPE: ${{ needs.validate_ref.outputs.ref_type }}
           RELEASE_TAG_SUFFIX: ${{ matrix.release_tag_suffix }}
           NIGHTLY_TAG_PREFIX: ${{ matrix.nightly_tag_prefix }}
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         shell: bash

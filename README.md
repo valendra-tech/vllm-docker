@@ -81,8 +81,8 @@ GitHub Actions keeps the R2 registry synchronized with Docker Hub:
 The workflows copy the source image to a local OCI layout with `skopeo`, upload
 the objects to the `public-docker-registry` R2 bucket (S3-compatible API), and
 validate the published registry. They require these repository secrets:
-`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_ENDPOINT` (the bucket name
-is fixed as `public-docker-registry`).
+`R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`, plus the repository variable
+`R2_ENDPOINT` (the bucket name is fixed as `public-docker-registry`).
 
 ## How it works
 
