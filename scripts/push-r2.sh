@@ -28,6 +28,7 @@ upload() {
   if ! aws s3 cp "${local_path}" "s3://${R2_BUCKET}/${s3_key}" \
     --endpoint-url "${R2_ENDPOINT}" \
     --region auto \
+    --no-progress \
     --content-type "${content_type}" \
     --cache-control "${cache_control}"; then
     echo "upload failed: s3://${R2_BUCKET}/${s3_key}" >&2
@@ -40,6 +41,7 @@ ensure_ping() {
   if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2/" \
     --endpoint-url "${R2_ENDPOINT}" \
     --region auto \
+    --no-progress \
     --content-type application/json; then
     echo "upload failed: s3://${R2_BUCKET}/v2/" >&2
     exit 1

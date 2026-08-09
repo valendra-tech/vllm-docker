@@ -79,6 +79,7 @@ s3://public-docker-registry/v2/
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/json
 s3
@@ -89,6 +90,7 @@ s3://public-docker-registry/v2/vllm/blobs/sha256:3333333333333333333333333333333
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/octet-stream
 --cache-control
@@ -101,6 +103,7 @@ s3://public-docker-registry/v2/vllm/manifests/sha256:222222222222222222222222222
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/vnd.oci.image.manifest.v1+json
 --cache-control
@@ -113,6 +116,7 @@ s3://public-docker-registry/v2/vllm/manifests/sha256:111111111111111111111111111
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/vnd.oci.image.index.v1+json
 --cache-control
@@ -125,6 +129,7 @@ s3://public-docker-registry/v2/vllm/manifests/test-tag
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/vnd.oci.image.index.v1+json
 --cache-control
@@ -137,6 +142,7 @@ s3://public-docker-registry/v2/
 https://account.r2.cloudflarestorage.com
 --region
 auto
+--no-progress
 --content-type
 application/json
 EOF
