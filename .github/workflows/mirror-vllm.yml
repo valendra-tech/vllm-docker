@@ -18,3 +18,4 @@ jobs:
     uses: ./.github/workflows/mirror-vllm-reusable.yml
     with:
       vllm_ref: ${{ inputs.vllm_ref }}
+    secrets: inherit
