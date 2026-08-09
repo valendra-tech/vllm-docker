@@ -5,7 +5,7 @@
 # object with the AWS CLI. Deletes uploaded blob files from the layout
 # directory (runner disk); manifest/tag files are kept.
 # Requires: AWS CLI, and env vars R2_ENDPOINT, R2_BUCKET,
-# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
+# R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
 set -euo pipefail
 
 layout_dir="${1:?usage: push-r2.sh <oci-layout-dir> <tag>}"
@@ -13,8 +13,11 @@ tag="${2:?usage: push-r2.sh <oci-layout-dir> <tag>}"
 
 : "${R2_ENDPOINT:?R2_ENDPOINT is required}"
 : "${R2_BUCKET:?R2_BUCKET is required}"
-: "${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}"
-: "${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}"
+: "${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}"
+: "${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}"
+
+export AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY}"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ping_file="${PING_FILE:-$(mktemp)}"
