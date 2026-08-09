@@ -98,7 +98,7 @@ digest=""
 media_type=""
 entry=""
 
-for entry in "${plan_blobs[@]}"; do
+for entry in ${plan_blobs[@]+"${plan_blobs[@]}"}; do
   IFS='|' read -r local_path digest <<< "${entry}"
   printf 'BLOB\t%s\tv2/vllm/blobs/%s\tapplication/octet-stream\tpublic, max-age=31536000, immutable\n' \
     "${local_path}" "${digest}"
