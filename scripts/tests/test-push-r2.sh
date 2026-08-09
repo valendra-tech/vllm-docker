@@ -75,15 +75,18 @@ export PATH="${work}:${PATH}"
 
 expected="${work}/expected.txt"
 cat > "${expected}" <<EOF
-s3
-cp
+s3api
+put-object
+--bucket
+public-docker-registry
+--key
+v2/
+--body
 ${work}/ping
-s3://public-docker-registry/v2/
 --endpoint-url
 https://account.r2.cloudflarestorage.com
 --region
 auto
---no-progress
 --content-type
 application/json
 s3api
@@ -135,15 +138,18 @@ auto
 application/vnd.oci.image.index.v1+json
 --cache-control
 no-cache
-s3
-cp
+s3api
+put-object
+--bucket
+public-docker-registry
+--key
+v2/
+--body
 ${work}/ping
-s3://public-docker-registry/v2/
 --endpoint-url
 https://account.r2.cloudflarestorage.com
 --region
 auto
---no-progress
 --content-type
 application/json
 EOF

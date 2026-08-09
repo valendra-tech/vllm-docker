@@ -65,11 +65,14 @@ upload_blob() {
 
 ensure_ping() {
   : > "${ping_file}"
-  if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2/" \
+  if ! aws s3api put-object \
+    --bucket "${R2_BUCKET}" \
+    --key "v2/" \
+    --body "${ping_file}" \
     --endpoint-url "${R2_ENDPOINT}" \
     --region auto \
-    --no-progress \
-    --content-type application/json; then
+    --content-type application/json \
+    >/dev/null; then
     echo "upload failed: s3://${R2_BUCKET}/v2/" >&2
     exit 1
   fi
