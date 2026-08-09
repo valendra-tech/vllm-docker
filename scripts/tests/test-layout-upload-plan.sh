@@ -71,4 +71,41 @@ TAG	${blobs}/aaa	v2/vllm/manifests/test-tag	application/vnd.docker.distribution.
 EOF
 
 diff "${expected}" <("${plan_script}" "${layout_dir}" "test-tag")
+
+empty_dir="$(mktemp -d)"
+trap 'rm -rf "${layout_dir}" "${empty_dir}"' EXIT
+
+empty_blobs="${empty_dir}/blobs/sha256"
+mkdir -p "${empty_blobs}"
+
+cat > "${empty_dir}/index.json" <<'EOF'
+{
+  "schemaVersion": 2,
+  "manifests": [
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:111",
+      "size": 1,
+      "annotations": {
+        "org.opencontainers.image.ref.name": "empty-tag"
+      }
+    }
+  ]
+}
+EOF
+
+cat > "${empty_blobs}/111" <<'EOF'
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json"
+}
+EOF
+
+expected_empty="${empty_dir}/expected.txt"
+cat > "${expected_empty}" <<EOF
+MANIFEST	${empty_blobs}/111	v2/vllm/manifests/sha256:111	application/vnd.oci.image.manifest.v1+json	no-cache
+TAG	${empty_blobs}/111	v2/vllm/manifests/empty-tag	application/vnd.oci.image.manifest.v1+json	no-cache
+EOF
+
+diff "${expected_empty}" <("${plan_script}" "${empty_dir}" "empty-tag")
 echo "layout-upload-plan: OK"

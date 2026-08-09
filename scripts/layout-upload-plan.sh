@@ -5,6 +5,7 @@
 #   BLOB|<path>|<s3-key>|<content-type>|<cache-control>
 #   MANIFEST|<path>|<s3-key>|<content-type>|<cache-control>
 #   TAG|<path>|<s3-key>|<content-type>|<cache-control>
+# Requires: jq
 set -euo pipefail
 
 layout_dir="${1:?usage: layout-upload-plan.sh <oci-layout-dir> <tag>}"
@@ -72,8 +73,8 @@ resolve_manifest() {
 }
 
 root_digest="$(jq -r --arg t "${tag}" \
-  '.manifests[] | select(.annotations["org.opencontainers.image.ref.name"] == $t) | .digest' \
-  "${index_file}" | head -n 1)"
+  'first(.manifests[] | select(.annotations["org.opencontainers.image.ref.name"] == $t) | .digest)' \
+  "${index_file}")"
 
 if [[ -z "${root_digest}" ]]; then
   die "tag ${tag} not found in ${index_file}"
@@ -92,11 +93,6 @@ while IFS= read -r -d '' file; do
     plan_blobs+=("${file}|sha256:${hex}")
   fi
 done < <(find "${blobs_dir}" -maxdepth 1 -type f -print0 | sort -z)
-
-local_path=""
-digest=""
-media_type=""
-entry=""
 
 for entry in ${plan_blobs[@]+"${plan_blobs[@]}"}; do
   IFS='|' read -r local_path digest <<< "${entry}"
