@@ -39,6 +39,30 @@ upload() {
   fi
 }
 
+object_exists() {
+  aws s3api head-object \
+    --bucket "${R2_BUCKET}" \
+    --key "$1" \
+    --endpoint-url "${R2_ENDPOINT}" \
+    --region auto \
+    >/dev/null 2>&1
+}
+
+upload_blob() {
+  local local_path="$1"
+  local s3_key="$2"
+  local content_type="$3"
+  local cache_control="$4"
+
+  if object_exists "${s3_key}"; then
+    echo "Skipping existing blob: s3://${R2_BUCKET}/${s3_key}" >&2
+  else
+    upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
+  fi
+
+  rm -f "${local_path}"
+}
+
 ensure_ping() {
   : > "${ping_file}"
   if ! aws s3 cp "${ping_file}" "s3://${R2_BUCKET}/v2/" \
@@ -57,8 +81,7 @@ ensure_ping
 while IFS=$'\t' read -r kind local_path s3_key content_type cache_control; do
   case "${kind}" in
     BLOB)
-      upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
-      rm -f "${local_path}"
+      upload_blob "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
       ;;
     MANIFEST | TAG)
       upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"

@@ -50,11 +50,15 @@ EOF
 
 echo "config" > "${blobs}/3333333333333333333333333333333333333333333333333333333333333333"
 
-# Mock AWS CLI: records every invocation, behaves as a success.
+# Mock AWS CLI: records every invocation and reports the config blob as existing.
 cat > "${work}/aws" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >> "${AWS_MOCK_LOG}"
+if [[ "$1" == "s3api" && "$2" == "head-object" ]]; then
+  [[ "$6" == "v2/vllm/blobs/sha256:3333333333333333333333333333333333333333333333333333333333333333" ]]
+  exit 0
+fi
 exit 0
 MOCK
 chmod +x "${work}/aws"
@@ -82,19 +86,16 @@ auto
 --no-progress
 --content-type
 application/json
-s3
-cp
-${blobs}/3333333333333333333333333333333333333333333333333333333333333333
-s3://public-docker-registry/v2/vllm/blobs/sha256:3333333333333333333333333333333333333333333333333333333333333333
+s3api
+head-object
+--bucket
+public-docker-registry
+--key
+v2/vllm/blobs/sha256:3333333333333333333333333333333333333333333333333333333333333333
 --endpoint-url
 https://account.r2.cloudflarestorage.com
 --region
 auto
---no-progress
---content-type
-application/octet-stream
---cache-control
-public, max-age=31536000, immutable
 s3
 cp
 ${blobs}/2222222222222222222222222222222222222222222222222222222222222222
@@ -149,6 +150,12 @@ EOF
 
 diff "${expected}" "${AWS_MOCK_LOG}"
 
+if grep -Fq "${blobs}/3333333333333333333333333333333333333333333333333333333333333333" "${AWS_MOCK_LOG}"; then
+  echo "push-r2: existing blob was uploaded unexpectedly" >&2
+  exit 1
+fi
+echo "push-r2: existing blob skipped: OK"
+
 test ! -f "${blobs}/3333333333333333333333333333333333333333333333333333333333333333" \
   && echo "push-r2: blob deleted after upload: OK"
 test -f "${blobs}/1111111111111111111111111111111111111111111111111111111111111111" \
@@ -193,6 +200,9 @@ cat > "${work}/fail-bin/aws" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >> "${AWS_MOCK_LOG}"
+if [[ "$1" == "s3api" && "$2" == "head-object" ]]; then
+  exit 1
+fi
 count="$(grep -c '^cp$' "${AWS_MOCK_LOG}")"
 if [[ "${count}" -eq 2 ]]; then
   exit 1
