@@ -10,10 +10,11 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 env:
   SOURCE_IMAGE: docker.io/vllm/vllm-openai
+  R2_BUCKET: public-docker-registry
+  R2_REGISTRY_DOMAIN: public-docker-registry.valendra.net
 
 jobs:
   validate_ref:
@@ -59,6 +60,9 @@ jobs:
             release_tag_suffix: -ubuntu2404
             nightly_tag_prefix: nightly-
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Install Skopeo
         shell: bash
         run: |
@@ -66,23 +70,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes skopeo
 
-      - name: Log in to GHCR
-        env:
-          GHCR_TOKEN: ${{ github.token }}
-          GHCR_USER: ${{ github.actor }}
+      - name: Install AWS CLI
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io \
-            --username "$GHCR_USER" \
-            --password-stdin
+          curl --silent --show-error --fail --location \
+            "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+            -o "awscliv2.zip"
+          unzip -tq awscliv2.zip
+          unzip -q awscliv2.zip && sudo ./aws/install --update
 
-      - name: Mirror image
+      - name: Mirror image to R2
         env:
           VLLM_REF: ${{ needs.validate_ref.outputs.vllm_ref }}
           REF_TYPE: ${{ needs.validate_ref.outputs.ref_type }}
           RELEASE_TAG_SUFFIX: ${{ matrix.release_tag_suffix }}
           NIGHTLY_TAG_PREFIX: ${{ matrix.nightly_tag_prefix }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         shell: bash
         run: |
           set -euo pipefail
@@ -101,9 +107,17 @@ jobs:
           esac
 
           source_image="${SOURCE_IMAGE}:${source_tag}"
-          target_image="ghcr.io/${GITHUB_REPOSITORY,,}:${source_tag}"
+          registry_image="${R2_REGISTRY_DOMAIN}/vllm:${source_tag}"
 
-          echo "Copying ${source_image} to ${target_image}"
+          echo "Copying ${source_image} to OCI layout"
+          layout_dir="$(mktemp -d)"
+          trap 'rm -rf "${layout_dir}"' EXIT
           skopeo copy --all --retry-times 3 \
             "docker://${source_image}" \
-            "docker://${target_image}"
+            "oci:${layout_dir}:${source_tag}"
+
+          echo "Uploading to R2 bucket ${R2_BUCKET}"
+          ./scripts/push-r2.sh "${layout_dir}" "${source_tag}"
+
+          echo "Validating ${registry_image}"
+          skopeo inspect --retry-times 3 "docker://${registry_image}"
