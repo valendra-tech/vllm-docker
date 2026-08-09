@@ -21,3 +21,6 @@ if grep -Fq 'AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}' "${reusable_wor
   exit 1
 fi
 echo "mirror-vllm-reusable: R2 credential names match uploader: OK"
+
+grep -Fq 'skopeo inspect --no-tags --retry-times 3' "${reusable_workflow}"
+echo "mirror-vllm-reusable: static registry inspection disables tag listing: OK"

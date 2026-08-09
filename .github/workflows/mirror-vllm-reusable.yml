@@ -120,4 +120,4 @@ jobs:
           ./scripts/push-r2.sh "${layout_dir}" "${source_tag}"
 
           echo "Validating ${registry_image}"
-          skopeo inspect --retry-times 3 "docker://${registry_image}"
+          skopeo inspect --no-tags --retry-times 3 "docker://${registry_image}"
