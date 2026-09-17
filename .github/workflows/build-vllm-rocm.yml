@@ -1,0 +1,197 @@
+name: Build vLLM ROCm release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_confirmation:
+        description: Type PUBLISH to build and publish the immutable ROCm release tag
+        required: true
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  VLLM_COMMIT: 98dff2a81d747d1dba01a47f939f48c3526d4206
+  VLLM_REPO: https://github.com/vllm-project/vllm.git
+  VLLM_DOCKERFILE_URL: https://raw.githubusercontent.com/vllm-project/vllm/98dff2a81d747d1dba01a47f939f48c3526d4206/docker/Dockerfile.rocm
+  VLLM_DOCKERFILE_SHA256: 160eeee04715f3090f22ae31e7ff547a6210fad876c1459525c0da2694e54199
+  BASE_IMAGE: rocm/vllm-dev:base@sha256:3cead535c32c11c59b222bbaa502076b9c737fb969b70b7bc9bb8ce77da5698e
+  BASE_IMAGE_INSPECT: rocm/vllm-dev@sha256:3cead535c32c11c59b222bbaa502076b9c737fb969b70b7bc9bb8ce77da5698e
+  ROCM_BASE_IMAGE: rocm/dev-ubuntu-22.04:7.2.3-complete@sha256:b64aecbed6cc2d8227407899831d5c53fa8450d4db08f6a2400c29587ce15be9
+  PYTORCH_ROCM_ARCH: gfx942;gfx950
+  TAG: v0.29.0-rocm72-ubuntu2204
+  R2_BUCKET: public-docker-registry
+  R2_REGISTRY_DOMAIN: public-docker-registry.valendra.net
+
+jobs:
+  build-and-publish:
+    name: Build and publish ROCm release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm manual release gate
+        env:
+          PUBLISH_CONFIRMATION: ${{ inputs.publish_confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "ROCm publication must run from the protected main branch" >&2
+            exit 1
+          fi
+          if [[ "${PUBLISH_CONFIRMATION}" != "PUBLISH" ]]; then
+            echo "Type PUBLISH in the manual dispatch input to enable publication" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install OCI and R2 tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes skopeo
+          if ! command -v aws >/dev/null 2>&1; then
+            curl --silent --show-error --fail --location \
+              "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+              -o "${RUNNER_TEMP}/awscliv2.zip"
+            unzip -tq "${RUNNER_TEMP}/awscliv2.zip"
+            unzip -q "${RUNNER_TEMP}/awscliv2.zip" -d "${RUNNER_TEMP}"
+            sudo "${RUNNER_TEMP}/aws/install" --update
+          fi
+
+      - name: Verify R2 publish configuration
+        env:
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${R2_ENDPOINT:?R2_ENDPOINT is required}"
+          : "${R2_ACCESS_KEY_ID:?R2_ACCESS_KEY_ID is required}"
+          : "${R2_SECRET_ACCESS_KEY:?R2_SECRET_ACCESS_KEY is required}"
+
+      - name: Verify pinned ROCm base metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_metadata="$(skopeo inspect --no-tags "docker://${BASE_IMAGE_INSPECT}")"
+          jq -e \
+            --arg rocm_base_image "${ROCM_BASE_IMAGE}" \
+            '(.Architecture == "amd64")
+             and (.Os == "linux")
+             and (.Labels["vllm.rocm_base.dependency.rocm"] == "7.2.3")
+             and (.Labels["vllm.rocm_base.base_image"] == $rocm_base_image)' \
+            <<< "${base_metadata}"
+
+      - name: Check release tag is absent
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag_url="https://${R2_REGISTRY_DOMAIN}/v2/vllm/manifests/${TAG}"
+          status="$(curl --silent --show-error --location \
+            --output /dev/null --write-out '%{http_code}' "${tag_url}")"
+          case "${status}" in
+            404) echo "Release tag is absent: ${TAG}" ;;
+            200) echo "Release tag already exists: ${TAG}" >&2; exit 1 ;;
+            *) echo "Unexpected registry status ${status} for ${TAG}" >&2; exit 1 ;;
+          esac
+
+      - name: Download and verify upstream ROCm Dockerfile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          build_dir="${RUNNER_TEMP}/vllm-rocm-build"
+          rm -rf "${build_dir}"
+          mkdir -p "${build_dir}"
+          curl --silent --show-error --fail --location \
+            "${VLLM_DOCKERFILE_URL}" -o "${build_dir}/Dockerfile.rocm"
+          printf '%s  %s\n' "${VLLM_DOCKERFILE_SHA256}" \
+            "${build_dir}/Dockerfile.rocm" | sha256sum --check --strict
+
+      - name: Build linux/amd64 OCI image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          oci_archive="${RUNNER_TEMP}/vllm-rocm.oci.tar"
+          rm -f "${oci_archive}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --file "${RUNNER_TEMP}/vllm-rocm-build/Dockerfile.rocm" \
+            --target vllm-openai \
+            --tag "vllm:${TAG}" \
+            --output "type=oci,dest=${oci_archive}" \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "REMOTE_VLLM=1" \
+            --build-arg "VLLM_REPO=${VLLM_REPO}" \
+            --build-arg "VLLM_BRANCH=${VLLM_COMMIT}" \
+            --build-arg "ARG_PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}" \
+            --build-arg "USE_SCCACHE=0" \
+            --build-arg "NIC_BACKEND=none" \
+            --build-arg "INSTALL_LMCACHE=false" \
+            --build-arg "max_jobs=4" \
+            --label "org.opencontainers.image.source=${VLLM_REPO}" \
+            --label "org.opencontainers.image.revision=${VLLM_COMMIT}" \
+            --label "org.opencontainers.image.version=${TAG}" \
+            --progress plain \
+            "${RUNNER_TEMP}/vllm-rocm-build"
+
+      - name: Validate local OCI image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          layout_dir="${RUNNER_TEMP}/vllm-rocm-layout"
+          rm -rf "${layout_dir}"
+          mkdir -p "${layout_dir}"
+          tar -xf "${RUNNER_TEMP}/vllm-rocm.oci.tar" -C "${layout_dir}"
+          test -f "${layout_dir}/index.json"
+
+          local_metadata="$(skopeo inspect --no-tags "oci:${layout_dir}:${TAG}")"
+          jq -e \
+            --arg commit "${VLLM_COMMIT}" \
+            '(.Architecture == "amd64")
+             and (.Os == "linux")
+             and (.Labels["org.opencontainers.image.revision"] == $commit)' \
+            <<< "${local_metadata}"
+          jq -er '.Digest' <<< "${local_metadata}" > "${RUNNER_TEMP}/vllm-rocm-digest"
+
+      - name: Upload image to R2
+        env:
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          IMMUTABLE_TAG: "1"
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/push-r2.sh "${RUNNER_TEMP}/vllm-rocm-layout" "${TAG}"
+
+      - name: Validate published manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_metadata="$(skopeo inspect --no-tags --retry-times 3 \
+            "docker://${R2_REGISTRY_DOMAIN}/vllm:${TAG}")"
+          jq -e '(.Architecture == "amd64") and (.Os == "linux")' \
+            <<< "${remote_metadata}"
+          local_digest="$(<"${RUNNER_TEMP}/vllm-rocm-digest")"
+          remote_digest="$(jq -er '.Digest' <<< "${remote_metadata}")"
+          if [[ "${remote_digest}" != "${local_digest}" ]]; then
+            echo "Published digest ${remote_digest} does not match local digest ${local_digest}" >&2
+            exit 1
+          fi

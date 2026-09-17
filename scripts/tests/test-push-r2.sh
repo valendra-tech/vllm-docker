@@ -230,3 +230,65 @@ fi
 
 test -f "${fail_blobs}/5555555555555555555555555555555555555555555555555555555555555555" \
   && echo "push-r2: failed blob retained: OK"
+
+# --- Immutable tag mode must use a conditional object write so an existing
+# --- release tag cannot be overwritten by a concurrent or repeated publish.
+
+immutable_layout="${work}/immutable-layout"
+immutable_blobs="${immutable_layout}/blobs/sha256"
+mkdir -p "${immutable_blobs}"
+
+cat > "${immutable_layout}/index.json" <<'EOF'
+{
+  "schemaVersion": 2,
+  "manifests": [
+    {
+      "mediaType": "application/vnd.oci.image.manifest.v1+json",
+      "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "size": 1,
+      "annotations": {"org.opencontainers.image.ref.name": "immutable-tag"}
+    }
+  ]
+}
+EOF
+
+cat > "${immutable_blobs}/6666666666666666666666666666666666666666666666666666666666666666" <<'EOF'
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+  "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777", "size": 1},
+  "layers": []
+}
+EOF
+
+echo "config" > "${immutable_blobs}/7777777777777777777777777777777777777777777777777777777777777777"
+
+export AWS_MOCK_LOG="${work}/immutable-calls.log"
+export IMMUTABLE_TAG=1
+export PATH="${work}:${PATH}"
+
+"${push_script}" "${immutable_layout}" "immutable-tag"
+
+grep -Fq -- '--if-none-match' "${AWS_MOCK_LOG}"
+grep -Fq 'v2/vllm/manifests/immutable-tag' "${AWS_MOCK_LOG}"
+echo "push-r2: immutable tag uses conditional write: OK"
+
+mkdir -p "${work}/immutable-fail-bin"
+cat > "${work}/immutable-fail-bin/aws" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$@" >> "${AWS_MOCK_LOG}"
+if [[ "$1" == "s3api" && "$2" == "put-object" && "$6" == "v2/vllm/manifests/immutable-tag" ]]; then
+  exit 1
+fi
+exit 0
+MOCK
+chmod +x "${work}/immutable-fail-bin/aws"
+
+export PATH="${work}/immutable-fail-bin:${PATH}"
+if ! "${push_script}" "${immutable_layout}" "immutable-tag" >/dev/null 2>&1; then
+  echo "push-r2: existing immutable tag rejects publication: OK"
+else
+  echo "push-r2: expected immutable tag failure" >&2
+  exit 1
+fi
