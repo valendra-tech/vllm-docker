@@ -4,6 +4,7 @@
 # Consumes the tab-separated plan from layout-upload-plan.sh and uploads each
 # object with the AWS CLI. Deletes uploaded blob files from the layout
 # directory (runner disk); manifest/tag files are kept.
+# Set IMMUTABLE_TAG=1 to create the tag object only when it does not exist.
 # Requires: AWS CLI, and env vars R2_ENDPOINT, R2_BUCKET,
 # R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
 set -euo pipefail
@@ -36,6 +37,31 @@ upload() {
     --cache-control "${cache_control}"; then
     echo "upload failed: s3://${R2_BUCKET}/${s3_key}" >&2
     exit 1
+  fi
+}
+
+upload_tag() {
+  local local_path="$1"
+  local s3_key="$2"
+  local content_type="$3"
+  local cache_control="$4"
+
+  if [[ "${IMMUTABLE_TAG:-0}" == "1" ]]; then
+    if ! aws s3api put-object \
+      --bucket "${R2_BUCKET}" \
+      --key "${s3_key}" \
+      --body "${local_path}" \
+      --endpoint-url "${R2_ENDPOINT}" \
+      --region auto \
+      --content-type "${content_type}" \
+      --cache-control "${cache_control}" \
+      --if-none-match '*' \
+      >/dev/null; then
+      echo "immutable tag upload failed or already exists: s3://${R2_BUCKET}/${s3_key}" >&2
+      exit 1
+    fi
+  else
+    upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
   fi
 }
 
@@ -87,7 +113,11 @@ while IFS=$'\t' read -r kind local_path s3_key content_type cache_control; do
       upload_blob "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
       ;;
     MANIFEST | TAG)
-      upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
+      if [[ "${kind}" == "TAG" ]]; then
+        upload_tag "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
+      else
+        upload "${local_path}" "${s3_key}" "${content_type}" "${cache_control}"
+      fi
       ;;
     *)
       echo "unknown plan kind: ${kind}" >&2
