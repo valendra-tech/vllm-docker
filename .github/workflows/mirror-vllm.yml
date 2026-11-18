@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       vllm_ref:
-        description: vLLM release (0.23.0 or v0.23.0) or full nightly commit SHA
+        description: vLLM release (0.34.0 or v0.34.0) or full nightly commit SHA
         required: true
         type: string
-        default: 0.23.0
+        default: 0.34.0
 
 permissions:
   contents: read
@@ -18,4 +18,5 @@ jobs:
     uses: ./.github/workflows/mirror-vllm-reusable.yml
     with:
       vllm_ref: ${{ inputs.vllm_ref }}
+      build_cu129: true
     secrets: inherit

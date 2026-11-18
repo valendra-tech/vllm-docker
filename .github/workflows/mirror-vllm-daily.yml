@@ -10,45 +10,22 @@ permissions:
 
 jobs:
   find-latest-version:
-    name: Find latest paired release
+    name: Find latest stable release
     runs-on: ubuntu-latest
     outputs:
       vllm_ref: ${{ steps.latest.outputs.vllm_ref }}
     steps:
-      - name: Find latest version with both CUDA tags
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Find latest CUDA release on Docker Hub
         id: latest
         shell: bash
         run: |
           set -euo pipefail
 
-          tags_file="$(mktemp)"
-          trap 'rm -f "$tags_file"' EXIT
-          next_url="https://hub.docker.com/v2/repositories/vllm/vllm-openai/tags?page_size=100&ordering=last_updated"
-
-          while [[ -n "$next_url" ]]; do
-            page="$(curl --fail --silent --show-error --location "$next_url")"
-            jq -r '.results[]?.name' <<< "$page" >> "$tags_file"
-            next_url="$(jq -r '.next // empty' <<< "$page")"
-          done
-
-          latest_version=""
-          while IFS= read -r version; do
-            if grep --fixed-strings --line-regexp --quiet \
-              "v${version}-ubuntu2404" "$tags_file"; then
-              latest_version="$version"
-            fi
-          done < <(
-            sed -E \
-              -n 's/^v([0-9]+\.[0-9]+\.[0-9]+)-cu129-ubuntu2404$/\1/p' \
-              "$tags_file" | sort -t. -k1,1n -k2,2n -k3,3n -u
-          )
-
-          if [[ -z "$latest_version" ]]; then
-            echo "No paired vLLM release was found on Docker Hub" >&2
-            exit 1
-          fi
-
-          echo "Latest paired vLLM version: v${latest_version}"
+          latest_version="$(bash scripts/find-latest-vllm-ref.sh)"
+          echo "Latest stable vLLM version: v${latest_version}"
           echo "vllm_ref=${latest_version}" >> "$GITHUB_OUTPUT"
 
   mirror:
