@@ -1,0 +1,76 @@
+diff --git a/cmake/external_projects/deepgemm.cmake b/cmake/external_projects/deepgemm.cmake
+--- a/cmake/external_projects/deepgemm.cmake
++++ b/cmake/external_projects/deepgemm.cmake
+@@ -39,6 +39,6 @@
+   # `logits_dtype` switch (vllm-project/DeepGEMM#46) and the mega_mhc
+   # CUDA-graph replay barrier fix (vllm-project/DeepGEMM#48).
+-  # Targets the PyTorch 2.11 stable ABI (requires PyTorch 2.14+ headers at build time) and CPython 3.10 limited API.
+-  set(_DEEPGEMM_UPSTREAM_TAG "82ca617e5879d0efb0aba5b91b1c81852588af6f")
++  # Use the parent of DeepGEMM#45, before it required PyTorch 2.14 headers.
++  set(_DEEPGEMM_UPSTREAM_TAG "ae4fd25d036a86042ac4bbfc01e2e0fa5fb362b6")
+
+   set(_deepgemm_fc_root "${FETCHCONTENT_BASE_DIR}")
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -632,5 +632,8 @@
+ # Skip adding +precompiled suffix to version (preserves git-derived version)
+ ENV VLLM_SKIP_PRECOMPILED_VERSION_SUFFIX=1
+
++# The CUDA 12.9 dependency patch dirties the tagged checkout.
++ENV VLLM_VERSION_OVERRIDE=0.34.0
++
+ # Use existing torch for nightly and Rubin prerelease builds
+ RUN --mount=type=cache,target=/opt/uv/cache \
+@@ -1384,4 +1387,15 @@
+ # See docs/deployment/docker.md.
+ # USER vllm
+ ENTRYPOINT ["vllm", "serve"]
++
++# Link the CUDA extensions on the CPU-only runner using the toolkit's driver stub.
++RUN --mount=type=bind,from=base,source=/usr/local/cuda-12.9/targets/x86_64-linux/lib/stubs,target=/tmp/cuda-stubs \
++    mkdir /tmp/cuda-smoke && \
++    ln -s /tmp/cuda-stubs/libcuda.so /tmp/cuda-smoke/libcuda.so.1 && \
++    LD_LIBRARY_PATH="/tmp/cuda-smoke:${LD_LIBRARY_PATH}" python3 -c 'import torch, torchvision, vllm; \
++        import vllm._C_stable_libtorch, vllm._moe_C_stable_libtorch; \
++        assert torch.version.cuda == "12.9", torch.version.cuda; \
++        assert torch.__version__ == "2.13.0+cu129", torch.__version__; \
++        assert vllm.__version__ == "0.34.0", vllm.__version__' && \
++    rm -r /tmp/cuda-smoke
+ #################### OPENAI API SERVER ####################
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -8,5 +8,5 @@
+     "setuptools-scm>=8.0",
+     "setuptools-rust>=1.9.0",
+-    "torch == 2.14.0",
++    "torch == 2.13.0+cu129",
+     "wheel",
+     "jinja2",
+diff --git a/requirements/build/cuda.txt b/requirements/build/cuda.txt
+--- a/requirements/build/cuda.txt
++++ b/requirements/build/cuda.txt
+@@ -6,5 +6,5 @@
+ setuptools-scm>=8
+ setuptools-rust>=1.9.0
+-torch==2.14.0
++torch==2.13.0+cu129
+ wheel
+ jinja2>=3.1.6
+diff --git a/requirements/cuda.txt b/requirements/cuda.txt
+--- a/requirements/cuda.txt
++++ b/requirements/cuda.txt
+@@ -6,8 +6,8 @@
+ # Dependencies for NVIDIA GPUs
+-torch==2.14.0
+-torchaudio==2.11.0
++torch==2.13.0+cu129
++torchaudio==2.11.0+cu129
+ # These must be updated alongside torch
+-torchvision==0.29.0 # Required for phi3v processor. See https://github.com/pytorch/vision?tab=readme-ov-file#installation for corresponding version
+-torchcodec >= 0.14
++torchvision==0.28.0+cu129 # Required for phi3v processor.
++torchcodec==0.16.0+cu129
+ PyNvVideoCodec==2.0.4
+ flashinfer-python==0.7.3

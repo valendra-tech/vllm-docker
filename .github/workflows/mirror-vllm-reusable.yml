@@ -7,43 +7,37 @@ on:
         description: vLLM release or full nightly commit SHA
         required: true
         type: string
+      build_cu129:
+        description: Build the pinned CUDA 12.9 release if its upstream image is absent
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
-  SOURCE_IMAGE: docker.io/vllm/vllm-openai
+  UPSTREAM_IMAGE: docker.io/vllm/vllm-openai
   R2_BUCKET: public-docker-registry
   R2_REGISTRY_DOMAIN: public-docker-registry.valendra.net
 
 jobs:
   validate_ref:
-    name: Validate vLLM reference
+    name: Resolve vLLM image tags
     runs-on: ubuntu-latest
     outputs:
-      vllm_ref: ${{ steps.ref.outputs.vllm_ref }}
       ref_type: ${{ steps.ref.outputs.ref_type }}
+      matrix: ${{ steps.ref.outputs.matrix }}
+      build_cu129: ${{ steps.ref.outputs.build_cu129 }}
     steps:
-      - name: Normalize reference
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve source and destination tags
         id: ref
         env:
           INPUT_REF: ${{ inputs.vllm_ref }}
         shell: bash
-        run: |
-          set -euo pipefail
-
-          reference="${INPUT_REF#v}"
-          if [[ "$reference" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            ref_type="release"
-          elif [[ "$reference" =~ ^[0-9a-f]{40}$ ]]; then
-            ref_type="nightly"
-          else
-            echo "vllm_ref must match X.Y.Z, vX.Y.Z, or a 40-character lowercase commit SHA" >&2
-            exit 1
-          fi
-
-          echo "vllm_ref=$reference" >> "$GITHUB_OUTPUT"
-          echo "ref_type=$ref_type" >> "$GITHUB_OUTPUT"
+        run: bash scripts/resolve-mirror-tags.sh "${INPUT_REF}" >> "${GITHUB_OUTPUT}"
 
   mirror:
     name: Mirror ${{ matrix.cuda }} ${{ needs.validate_ref.outputs.ref_type }}
@@ -51,14 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - cuda: cu129
-            release_tag_suffix: -cu129-ubuntu2404
-            nightly_tag_prefix: cu129-nightly-
-          - cuda: cu13
-            release_tag_suffix: -ubuntu2404
-            nightly_tag_prefix: nightly-
+      matrix: ${{ fromJSON(needs.validate_ref.outputs.matrix) }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -82,10 +69,8 @@ jobs:
 
       - name: Mirror image to R2
         env:
-          VLLM_REF: ${{ needs.validate_ref.outputs.vllm_ref }}
-          REF_TYPE: ${{ needs.validate_ref.outputs.ref_type }}
-          RELEASE_TAG_SUFFIX: ${{ matrix.release_tag_suffix }}
-          NIGHTLY_TAG_PREFIX: ${{ matrix.nightly_tag_prefix }}
+          SOURCE_TAG: ${{ matrix.source_tag }}
+          DEST_TAG: ${{ matrix.dest_tag }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -93,31 +78,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          case "$REF_TYPE" in
-            release)
-              source_tag="v${VLLM_REF}${RELEASE_TAG_SUFFIX}"
-              ;;
-            nightly)
-              source_tag="${NIGHTLY_TAG_PREFIX}${VLLM_REF}"
-              ;;
-            *)
-              echo "Unsupported vLLM reference type: ${REF_TYPE}" >&2
+          source_image="${UPSTREAM_IMAGE}:${SOURCE_TAG}"
+          registry_image="${R2_REGISTRY_DOMAIN}/vllm:${DEST_TAG}"
+          if [[ "${SOURCE_TAG}" != "${DEST_TAG}" ]]; then
+            if ! skopeo inspect --config --retry-times 3 "docker://${source_image}" |
+              jq -e 'any(.config.Env[]?; startswith("CUDA_VERSION=13."))' > /dev/null; then
+              echo "Could not verify CUDA 13 for ${source_image}" >&2
               exit 1
-              ;;
-          esac
-
-          source_image="${SOURCE_IMAGE}:${source_tag}"
-          registry_image="${R2_REGISTRY_DOMAIN}/vllm:${source_tag}"
+            fi
+          fi
 
           echo "Copying ${source_image} to OCI layout"
           layout_dir="$(mktemp -d)"
           trap 'rm -rf "${layout_dir}"' EXIT
           skopeo copy --all --retry-times 3 \
             "docker://${source_image}" \
-            "oci:${layout_dir}:${source_tag}"
+            "oci:${layout_dir}:${DEST_TAG}"
 
           echo "Uploading to R2 bucket ${R2_BUCKET}"
-          ./scripts/push-r2.sh "${layout_dir}" "${source_tag}"
+          ./scripts/push-r2.sh "${layout_dir}" "${DEST_TAG}"
 
           echo "Validating ${registry_image}"
           skopeo inspect --no-tags --retry-times 3 "docker://${registry_image}"
+
+  build_cu129:
+    name: Build missing CUDA 12.9 release
+    needs: validate_ref
+    if: inputs.build_cu129 && needs.validate_ref.outputs.build_cu129 == 'true'
+    uses: ./.github/workflows/build-vllm-cu129.yml
+    secrets: inherit

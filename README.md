@@ -5,8 +5,8 @@ This repository mirrors the official
 images and publishes them to a **static container registry on Cloudflare R2**:
 `public-docker-registry.valendra.net`.
 
-The CUDA images are copied as published. The ROCm release is built from a
-pinned upstream vLLM revision by a manual release workflow.
+Official CUDA images are mirrored when available. The custom CUDA 12.9 and
+ROCm releases are built from pinned upstream vLLM revisions.
 
 ## Use the mirror
 
@@ -24,14 +24,16 @@ public-docker-registry.valendra.net/vllm:<tag>
 
 Pulls are public: no `docker login` is needed.
 
-### Available tags
+### Release tag mapping
 
-The mirror currently publishes two CUDA variants for each vLLM version:
+The R2 tags use the same naming scheme for upstream mirrors and custom builds:
 
-| CUDA variant | Docker Hub source tag | R2 registry tag |
+| CUDA variant | Source | R2 registry tag |
 | --- | --- | --- |
 | CUDA 12.9 (`cu129`) | `v0.23.0-cu129-ubuntu2404` | `v0.23.0-cu129-ubuntu2404` |
 | CUDA 13 (`cu13`) | `v0.23.0-ubuntu2404` | `v0.23.0-ubuntu2404` |
+| CUDA 13.0 (`cu13`) | `v0.34.0` | `v0.34.0-ubuntu2404` |
+| CUDA 12.9 (`cu129`) | vLLM `0.34.0` source build, `linux/amd64` | `v0.34.0-cu129-ubuntu2404` |
 
 The first ROCm release is published separately:
 
@@ -47,8 +49,7 @@ uses different tag prefixes for the two CUDA variants:
 | CUDA 12.9 (`cu129`) | `cu129-nightly-<commit>` | `cu129-nightly-<commit>` |
 | CUDA 13 (`cu13`) | `nightly-<commit>` | `nightly-<commit>` |
 
-The tag is unchanged when the image is copied. Only the registry host and
-repository name change.
+Nightly tags are copied unchanged.
 
 ### Pull an image
 
@@ -76,18 +77,26 @@ docker run --gpus all --ipc=host --network host \
 GitHub Actions keeps the R2 registry synchronized with Docker Hub:
 
 - [Mirror vLLM reference](.github/workflows/mirror-vllm.yml) manually mirrors a
-  requested release or nightly commit. Enter `0.23.0`, `v0.23.0`, or a full
-  40-character commit SHA in the **vllm_ref** input.
+  requested release or nightly commit. Enter `0.34.0`, `v0.34.0`, or a full
+  40-character commit SHA in the **vllm_ref** input. If Docker Hub has no
+  CUDA 12.9 tag for `0.34.0`, the workflow calls
+  [the custom CUDA build](.github/workflows/build-vllm-cu129.yml).
 - [Mirror latest vLLM image](.github/workflows/mirror-vllm-daily.yml) runs every
-  day at `03:17 UTC`, finds the newest version with both CUDA tags, and mirrors
-  both variants. It can also be started manually.
+  day at `03:17 UTC`, finds the newest stable CUDA release, and mirrors the
+  variants that are available on Docker Hub. It can also be started manually.
 - [Mirror vLLM image](.github/workflows/mirror-vllm-reusable.yml) contains the
-  shared copy/upload logic and the `cu129`/`cu13` matrix.
+  shared tag resolution and copy/upload logic. For CUDA 13 it prefers the
+  `-ubuntu2404` source tag and verifies the CUDA version before using the
+  unsuffixed source tag instead.
 - [Build vLLM ROCm release](.github/workflows/build-vllm-rocm.yml) manually
   builds the pinned vLLM `0.29.0` ROCm image for `linux/amd64` and publishes
   `v0.29.0-rocm72-ubuntu2204`. Enter `PUBLISH` in the dispatch confirmation
   input. The workflow rejects an existing tag and uses a conditional R2 write,
   so a published release tag cannot be overwritten.
+
+The custom `0.34.0` build uses CUDA 12.9.1 and PyTorch `2.13.0+cu129` because
+PyTorch `2.14.0` has no CUDA 12.9 wheel. CI checks the installed vLLM, PyTorch,
+and CUDA versions before publishing and verifies the R2 manifest digest.
 
 The mirror workflows copy the source image to a local OCI layout with `skopeo`,
 upload the objects to the `public-docker-registry` R2 bucket (S3-compatible
