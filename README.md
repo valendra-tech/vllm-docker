@@ -105,10 +105,12 @@ To build CUDA 12.9 without mirroring CUDA 13 again, manually run
 public repository. Restrict its access to trusted workflows on `main`.
 
 Start with 16 vCPUs and 64 GB of RAM. The runner needs a local Docker daemon
-accessible to the runner user, Git, cURL, jq, Skopeo, and an up-to-date AWS
-CLI v2. The workflow checks for at least 8 logical CPUs, 28 GiB of available
-RAM, and 100 GiB free on each filesystem used for Docker storage and
-`RUNNER_TEMP`. It does not install packages, delete host SDKs, or require a GPU.
+accessible to the runner user, Git, cURL, jq, and an up-to-date AWS CLI v2.
+The workflow installs Skopeo if missing on a runner with APT and passwordless
+sudo. Otherwise, preinstall Skopeo on the runner. The workflow checks for at
+least 8 logical CPUs, 28 GiB of available RAM, and 100 GiB free on each
+filesystem used for Docker storage and `RUNNER_TEMP`. It does not delete host
+SDKs or require a GPU.
 
 The mirror workflows copy the source image to a local OCI layout with `skopeo`,
 upload the objects to the `public-docker-registry` R2 bucket (S3-compatible

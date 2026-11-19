@@ -16,13 +16,65 @@ grep -Fq "github.event_name == 'workflow_dispatch'" "${workflow}"
 grep -Fq 'bash scripts/check-cu129-runner.sh' "${workflow}"
 grep -Fq 'max-parallelism = 1' "${workflow}"
 grep -Fq -- "--build-arg \"max_jobs=\${CUDA_MAX_JOBS}\"" "${workflow}"
-if grep -Eq '^[[:space:]]+(push|pull_request(_target)?|schedule):|^[[:space:]]+sudo |docker system prune' "${workflow}"; then
-  echo "CUDA 12.9 must not run automatically or modify the host" >&2
+if grep -Eq '^[[:space:]]+(push|pull_request(_target)?|schedule):|[[:space:]]rm -rf |docker system prune' "${workflow}"; then
+  echo "CUDA 12.9 must not run automatically or clean the host" >&2
   exit 1
 fi
 
+skopeo_setup="$(awk '
+  /^      - name: Check the R2 release tag$/ { checked = 1; exit }
+  /^      - name: / { step = $0 == "      - name: Ensure Skopeo"; script = 0; next }
+  step && /^        run: \|$/ { script = 1; found = 1; next }
+  script && /^          / { print substr($0, 11) }
+  END { exit !(found && checked) }
+' "${workflow}")" || {
+  echo 'CUDA 12.9 must ensure Skopeo before checking the R2 release tag' >&2
+  exit 1
+}
+[[ -n "${skopeo_setup}" ]]
+
 fixture="$(mktemp -d)"
 trap 'rm -rf "${fixture}"' EXIT
+mkdir "${fixture}/setup-bin"
+cat > "${fixture}/setup-bin/sudo" <<'MOCK'
+#!/bin/bash
+set -eu
+[[ "$1" == -n ]]
+printf '%s\n' "${!#}" >> "${APT_LOG}"
+case "${!#}" in
+  update) ;;
+  skopeo)
+    [[ " $* " == *' install '* && " $* " == *' --no-install-recommends '* && " $* " == *' --no-remove '* ]]
+    /bin/ln -s "${SKOPEO_STUB}" "${0%/*}/skopeo"
+    ;;
+  *) exit 1 ;;
+esac
+MOCK
+cat > "${fixture}/mock-skopeo" <<'MOCK'
+#!/bin/bash
+[[ "$1" == --version ]] && echo 'skopeo version 1.18.0'
+MOCK
+chmod +x "${fixture}/setup-bin/sudo" "${fixture}/mock-skopeo"
+
+run_skopeo_setup() {
+  PATH="${fixture}/setup-bin" APT_LOG="${fixture}/apt.log" \
+    SKOPEO_STUB="${fixture}/mock-skopeo" /bin/bash -c "${skopeo_setup}"
+}
+
+if output="$(run_skopeo_setup 2>&1)"; then
+  echo 'Expected a runner without APT or Skopeo to be rejected' >&2
+  exit 1
+fi
+[[ "${output}" == *'Install Skopeo before using a runner without APT'* ]]
+[[ ! -e "${fixture}/apt.log" ]]
+
+ln -s sudo "${fixture}/setup-bin/apt-get"
+[[ "$(run_skopeo_setup)" == 'skopeo version 1.18.0' ]]
+[[ "$(cat "${fixture}/apt.log")" == $'update\nskopeo' ]]
+[[ "$(run_skopeo_setup)" == 'skopeo version 1.18.0' ]]
+[[ "$(cat "${fixture}/apt.log")" == $'update\nskopeo' ]]
+echo 'CUDA 12.9 Skopeo bootstrap: OK'
+
 mkdir "${fixture}/bin"
 cat > "${fixture}/bin/host-tool" <<'MOCK'
 #!/usr/bin/env bash

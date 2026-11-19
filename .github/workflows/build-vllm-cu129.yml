@@ -25,6 +25,21 @@ jobs:
       group: publish-vllm-v0.34.0-cu129
       cancel-in-progress: false
     steps:
+      - name: Ensure Skopeo
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v skopeo >/dev/null; then
+            if ! command -v apt-get >/dev/null || ! command -v sudo >/dev/null; then
+              echo '::error::Install Skopeo before using a runner without APT and passwordless sudo.' >&2
+              exit 1
+            fi
+            sudo -n apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 update
+            sudo -n DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l apt-get \
+              --yes --no-install-recommends --no-upgrade --no-remove install skopeo
+          fi
+          skopeo --version
+
       - name: Check the R2 release tag
         id: tag
         shell: bash
