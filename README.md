@@ -98,6 +98,18 @@ The custom `0.34.0` build uses CUDA 12.9.1 and PyTorch `2.13.0+cu129` because
 PyTorch `2.14.0` has no CUDA 12.9 wheel. CI checks the installed vLLM, PyTorch,
 and CUDA versions before publishing and verifies the R2 manifest digest.
 
+To build CUDA 12.9 without mirroring CUDA 13 again, manually run
+[Build vLLM 0.34.0 with CUDA 12.9](.github/workflows/build-vllm-cu129.yml) from
+`main`. Only this build uses a runner with the `self-hosted`, `linux`, and
+`x64` labels. Use a dedicated, isolated, preferably ephemeral runner for this
+public repository. Restrict its access to trusted workflows on `main`.
+
+Start with 16 vCPUs and 64 GB of RAM. The runner needs a local Docker daemon
+accessible to the runner user, Git, cURL, jq, Skopeo, and an up-to-date AWS
+CLI v2. The workflow checks for at least 8 logical CPUs, 28 GiB of available
+RAM, and 100 GiB free on each filesystem used for Docker storage and
+`RUNNER_TEMP`. It does not install packages, delete host SDKs, or require a GPU.
+
 The mirror workflows copy the source image to a local OCI layout with `skopeo`,
 upload the objects to the `public-docker-registry` R2 bucket (S3-compatible
 API), and validate the published registry. The ROCm workflow downloads the
