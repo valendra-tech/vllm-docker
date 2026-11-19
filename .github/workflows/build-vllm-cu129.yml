@@ -2,6 +2,7 @@ name: Build vLLM 0.34.0 with CUDA 12.9
 
 on:
   workflow_call:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -17,18 +18,13 @@ env:
 jobs:
   build-and-publish:
     name: Build and publish CUDA 12.9 release (amd64)
-    runs-on: ubuntu-24.04
+    if: github.repository == 'valendra-tech/vllm-docker' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 720
     concurrency:
       group: publish-vllm-v0.34.0-cu129
       cancel-in-progress: false
     steps:
-      - name: Install Skopeo
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes skopeo
-
       - name: Check the R2 release tag
         id: tag
         shell: bash
@@ -59,6 +55,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check self-hosted runner capacity
+        id: capacity
+        if: steps.tag.outputs.exists == 'false'
+        shell: bash
+        run: bash scripts/check-cu129-runner.sh
+
       - name: Check out vLLM v0.34.0 source
         if: steps.tag.outputs.exists == 'false'
         uses: actions/checkout@v4
@@ -80,23 +82,23 @@ jobs:
           fi
           git -C upstream-vllm apply --whitespace=error "${GITHUB_WORKSPACE}/patches/vllm-0.34.0-cu129.patch"
 
-      - name: Free space for the CUDA build
-        if: steps.tag.outputs.exists == 'false'
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-          df -h "${RUNNER_TEMP}"
-
       - name: Set up Docker Buildx
         if: steps.tag.outputs.exists == 'false'
         uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 1
 
       - name: Build, smoke-test, and export OCI image
+        id: build
         if: steps.tag.outputs.exists == 'false'
+        env:
+          CUDA_MAX_JOBS: ${{ steps.capacity.outputs.max_jobs }}
         shell: bash
         run: |
           set -euo pipefail
+          layout="$(mktemp -d "${RUNNER_TEMP}/vllm-cu129.XXXXXX")"
           docker buildx build \
             --platform linux/amd64 \
             --file upstream-vllm/docker/Dockerfile \
@@ -104,22 +106,24 @@ jobs:
             --tag "vllm:${TAG}" \
             --provenance=false \
             --sbom=false \
-            --output "type=oci,tar=false,dest=${RUNNER_TEMP}/vllm-cu129" \
+            --output "type=oci,tar=false,dest=${layout}" \
             --build-arg CUDA_VERSION=12.9.1 \
             --build-arg "BUILD_BASE_IMAGE=${CUDA_BUILD_IMAGE}" \
             --build-arg "FINAL_BASE_IMAGE=${CUDA_RUNTIME_IMAGE}" \
             --build-arg 'torch_cuda_arch_list=7.5 8.0 8.6 8.9 9.0 10.0 10.3 12.0' \
-            --build-arg max_jobs=3 \
+            --build-arg "max_jobs=${CUDA_MAX_JOBS}" \
             --build-arg nvcc_threads=2 \
             --label 'org.opencontainers.image.source=https://github.com/vllm-project/vllm' \
             --label "org.opencontainers.image.revision=${VLLM_COMMIT}" \
             --label "org.opencontainers.image.version=${TAG}" \
             --progress plain \
             upstream-vllm
+          printf 'layout=%s\n' "${layout}" >> "${GITHUB_OUTPUT}"
 
       - name: Publish and verify the R2 manifest
         if: steps.tag.outputs.exists == 'false'
         env:
+          OCI_LAYOUT: ${{ steps.build.outputs.layout }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -127,9 +131,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          layout="${RUNNER_TEMP}/vllm-cu129"
-          local_digest="$(skopeo inspect --no-tags --format '{{.Digest}}' "oci:${layout}:${TAG}")"
-          ./scripts/push-r2.sh "${layout}" "${TAG}"
+          local_digest="$(skopeo inspect --no-tags --format '{{.Digest}}' "oci:${OCI_LAYOUT}:${TAG}")"
+          ./scripts/push-r2.sh "${OCI_LAYOUT}" "${TAG}"
           remote_digest="$(skopeo inspect --no-tags --retry-times 3 --format '{{.Digest}}' \
             "docker://${R2_REGISTRY_DOMAIN}/vllm:${TAG}")"
           if [[ "${remote_digest}" != "${local_digest}" ]]; then
